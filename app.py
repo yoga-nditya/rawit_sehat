@@ -1,3 +1,5 @@
+import os
+import gdown
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from tensorflow.keras.models import load_model
@@ -5,28 +7,27 @@ from tensorflow.keras.preprocessing.image import img_to_array
 from PIL import Image
 import numpy as np
 import time
-import os
-import gdown
+import threading
 
 app = Flask(__name__)
 CORS(app)
 
-# ======== Konfigurasi Model ========
 MODEL_PATH = 'model_vgg16.h5'
-GDRIVE_FILE_ID = '14FKuNO91ESYq5M5w_9ulfjk287ga-qxw'
-
-# ======== Download model jika belum ada ========
-if not os.path.exists(MODEL_PATH):
-    print("📥 Downloading model from Google Drive...")
-    url = f'https://drive.google.com/uc?id={GDRIVE_FILE_ID}'
-    gdown.download(url, MODEL_PATH, quiet=False)
-
-# ======== Load model =========
-model = load_model(MODEL_PATH)
-
+MODEL_URL = 'https://drive.google.com/uc?id=14FKuNO91ESYq5M5w_9ulfjk287ga-qxw'
 labels = ['Healthy', 'Leaf Curl', 'Leaf Spot', 'Whitefly', 'Yellowish']
 
-# ======== Preprocessing Gambar =========
+model = None
+
+def download_and_load_model():
+    global model
+    if not os.path.exists(MODEL_PATH):
+        print("📥 Downloading model from Google Drive...")
+        gdown.download(MODEL_URL, MODEL_PATH, quiet=False)
+    print("✅ Loading model...")
+    model = load_model(MODEL_PATH)
+    print("✅ Model loaded!")
+
+# Preprocess image
 def preprocess_image_from_memory(image_file, target_size=(48, 48)):
     image = Image.open(image_file)
     if image.mode != 'RGB':
@@ -37,16 +38,18 @@ def preprocess_image_from_memory(image_file, target_size=(48, 48)):
     image = image / 255.0
     return image
 
-# ======== API Predict =========
 @app.route('/predict', methods=['POST'])
 def predict():
+    global model
+    if model is None:
+        return jsonify({'error': 'Model not loaded yet'}), 503
+
     if 'image' not in request.files:
         return jsonify({'error': 'No image uploaded'}), 400
 
     image_file = request.files['image']
     try:
         start_time = time.time()
-
         image = preprocess_image_from_memory(image_file)
 
         preprocess_time = time.time()
@@ -70,7 +73,8 @@ def predict():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ======== Jalankan Server ========
+# Jalankan model download dan load di background, supaya app langsung hidup
 if __name__ == '__main__':
+    threading.Thread(target=download_and_load_model).start()
     from waitress import serve
-    serve(app, host='0.0.0.0', port=5000, threads=8)
+    serve(app, host='0.0.0.0', port=5000)
